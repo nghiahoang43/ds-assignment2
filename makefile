@@ -2,13 +2,13 @@
 JAVA = java
 JAVAC = javac
 CP_PATH = -cp lib/json-20230227.jar:src/
-SOURCES = src/GETClient.java \
-					src/AggregationServer.java \
-          src/JSONHandler.java \
-          src/LamportClock.java \
-          src/ContentServer.java \
+SOURCES = src/AggregationServer.java \
+					src/GETClient.java \
           src/NetworkHandler.java \
           src/SocketNetworkHandler.java \
+          src/LamportClock.java \
+          src/JSONHandler.java \
+          src/ContentServer.java \
 
 PORT = 2000
 
