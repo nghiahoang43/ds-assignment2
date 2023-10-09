@@ -1,15 +1,15 @@
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
+
+import com.google.gson.*;
 
 public class JSONHandler {
+    private static final Gson gson = new Gson();
 
-    // Read file content and return as string
     public static String readFile(String filePath) throws IOException {
         if (filePath == null) {
             throw new IOException("Error 400: filePath is null.");
@@ -27,13 +27,12 @@ public class JSONHandler {
         return content.toString();
     }
 
-    // Convert text to JSON Object
-    public static JSONObject parseTextToJSON(String inputText) throws IllegalArgumentException {
+    public static JsonObject parseTextToJSON(String inputText) throws IllegalArgumentException {
         if (inputText == null) {
             throw new IllegalArgumentException("Input text is null.");
         }
 
-        Map<String, Object> jsonData = new HashMap<>();
+        Map<String, Object> jsonData = new LinkedHashMap<>();
         for (String line : inputText.split("\n")) {
             String[] parts = line.split(":", 2);
 
@@ -44,29 +43,34 @@ public class JSONHandler {
             jsonData.put(parts[0].trim(), parts[1].trim());
         }
 
-        return new JSONObject(jsonData);
+        return gson.toJsonTree(jsonData).getAsJsonObject();
     }
 
-    // Convert JSON Object to text
-    public static String parseJSONtoText(JSONObject jsonObject) throws IllegalArgumentException {
+    public static String parseJSONtoText(JsonObject jsonObject) throws IllegalArgumentException {
         if (jsonObject == null) {
             throw new IllegalArgumentException("Error 400: jsonObject is null.");
         }
 
         StringBuilder output = new StringBuilder();
-        Iterator<String> keys = jsonObject.keys();
+        Set<Map.Entry<String, JsonElement>> entries = jsonObject.entrySet();
 
-        while (keys.hasNext()) {
-            String key = keys.next();
-            Object value = jsonObject.get(key);
-            String valueStr = value.toString();
+        for (Map.Entry<String, JsonElement> entry : entries) {
+            String key = entry.getKey();
+            JsonElement valueElement = entry.getValue();
+
+            String valueStr;
+            if (valueElement.isJsonPrimitive()) {
+                valueStr = valueElement.getAsJsonPrimitive().getAsString();
+            } else {
+                valueStr = valueElement.toString();
+            }
+
             output.append(key).append(": ").append(valueStr).append("\n");
         }
 
         return output.toString();
     }
 
-    // Extract JSON content from a string
     public static String extractJSONContent(String data) {
         int startIdx = data.indexOf("{");
         int endIdx = data.lastIndexOf("}");
@@ -75,11 +79,7 @@ public class JSONHandler {
             return data.substring(startIdx, endIdx + 1);
         }
 
-        return null; // No valid JSON content found
+        return null;
     }
 
-    // Parse JSON object from string data
-    public static JSONObject parseJSONObject(String jsonData) {
-        return (jsonData != null && !jsonData.isEmpty()) ? new JSONObject(jsonData) : null;
-    }
 }

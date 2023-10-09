@@ -1,0 +1,4 @@
+id:IDS60901
+local_date_time_full:20230715160000
+air_temp:13.3
+cloud:Partly cloudy

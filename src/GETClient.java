@@ -1,50 +1,40 @@
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.json.JSONTokener;
+import com.google.gson.*;
 
 import java.util.UUID;
 
 public class GETClient {
-  private final NetworkHandler networkHandler;
+  private static final Gson gson = new Gson();
+  private NetworkHandler networkHandler;
   private final String serverId;
   private final LamportClock lamportClock;
+  private static final int DEFAUL_PORT = 4567;
+  private static final String DEFAULT_HOST = "localhost";
 
   // Constructor to initialize the GETClient
-  public GETClient(NetworkHandler networkHandler) {
-    this.networkHandler = networkHandler;
+  public GETClient(boolean isForTested) {
+    this.networkHandler = new SocketNetworkHandler(isForTested);
     this.serverId = UUID.randomUUID().toString();
     this.lamportClock = new LamportClock();
   }
 
-  public void interpretResponse(JSONObject response) {
+  public void interpretResponse(JsonObject response) {
     // check response
     if (response == null) {
       System.out.println("Error 400: No response from server.");
       return;
     }
-
-    // check status
-    String status = response.optString("status", null);
-
-    if (status == null) {
-      System.out.println("Error 400: Invalid response format.");
-      return;
-    }
-
-    // check LamportClock
-    switch (status) {
-      case "not available":
-        System.out.println("Error 400: No weather data available.");
-        break;
-      case "available":
-        printWeatherData(response);
-        break;
-      default:
-        System.out.println("Error 400: Unknown response status: " + status);
-    }
+    printWeatherData(response);
   }
 
-  private void printWeatherData(JSONObject response) {
+  public NetworkHandler getNetworkHandler() {
+    return this.networkHandler;
+  }
+
+  public LamportClock getLamportClock() {
+    return this.lamportClock;
+  }
+
+  public void printWeatherData(JsonObject response) {
     try {
       String weatherDataText = JSONHandler.parseJSONtoText(response);
       for (String line : weatherDataText.split("\n")) {
@@ -55,13 +45,13 @@ public class GETClient {
     }
   }
 
-  public JSONObject getData(String serverName, int port, String stationID) {
+  public JsonObject getData(String serverName, int port, String stationID) {
     int currentTime = lamportClock.send();
+    networkHandler.initializeClientSocket(serverName, port);
     String getRequest = generateRequestString(currentTime, stationID);
-
     try {
       String response = networkHandler.receiveDataFromServer(serverName, port, getRequest);
-      System.out.println("Response from server: " + response);
+      System.out.println("Response: " + getRequest);
       return handleServerResponse(response);
     } catch (Exception e) {
       System.out.println("Error 400: " + e.getMessage());
@@ -70,45 +60,58 @@ public class GETClient {
     }
   }
 
-  private String generateRequestString(int currentTime, String stationID) {
+  public String generateRequestString(int currentTime, String stationID) {
     return "GET /weather.json HTTP/1.1\r\n" +
-        "serverId: " + serverId + "\r\n" +
+        "ServerID: " + serverId + "\r\n" +
         "LamportClock: " + currentTime + "\r\n" +
         (stationID != null ? "StationID: " + stationID + "\r\n" : "") +
         "\r\n";
   }
 
-  private JSONObject handleServerResponse(String responseStr) throws JSONException {
+  public JsonObject handleServerResponse(String responseStr) {
     if (responseStr.startsWith("500")) {
       System.out.println("Error 500: Incorrect format response");
       return null;
     }
-
-    JSONObject jsonObject = new JSONObject(new JSONTokener(responseStr));
-    if (jsonObject.has("LamportClock")) {
-      lamportClock.receive(jsonObject.getInt("LamportClock"));
+    JsonObject jsonObject = gson.fromJson(JSONHandler.extractJSONContent(responseStr), JsonObject.class);
+    if (jsonObject == null) {
+      System.out.println("Error 400: No JSON object in response.");
+      return null;
     }
-
     return jsonObject;
   }
 
   public static void main(String[] args) {
-    // Validate and parse command-line arguments
-    if (args.length < 2) {
-      System.out.println("Usage: GETClient <serverName>:<port> [<stationID>]");
-      return;
+
+    String serverName;
+    int port;
+    String stationID = null;
+
+    if (args.length >= 1) {
+      String[] parts = args[0].split(":");
+
+      if (parts.length == 2) {
+        serverName = parts[0].replace("http://", "");
+        port = Integer.parseInt(parts[1].split("/")[0]);
+
+        if (args.length == 2) {
+          stationID = args[1];
+        }
+      } else {
+        System.err.println("Invalid argument format.");
+        return;
+      }
+    } else {
+      serverName = DEFAULT_HOST;
+      port = DEFAUL_PORT;
     }
 
-    String serverName = args[0].split(":")[0];
-    int port = Integer.parseInt(args[0].split(":")[1]);
-    String stationID = args.length == 3 ? args[2] : null;
-
     // Initialize network handler and client
-    NetworkHandler networkHandler = new SocketNetworkHandler();
-    GETClient client = new GETClient(networkHandler);
+    GETClient client = new GETClient(false);
 
     // Get and interpret the data
-    JSONObject response = client.getData(serverName, port, stationID);
+    JsonObject response = client.getData(serverName, port, stationID);
     client.interpretResponse(response);
+    client.networkHandler.closeResources();
   }
 }

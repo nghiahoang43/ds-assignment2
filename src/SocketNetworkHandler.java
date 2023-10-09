@@ -5,16 +5,21 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.List;
 
 public class SocketNetworkHandler implements NetworkHandler {
   private ServerSocket serverSocket;
   private Socket clientSocket;
   private PrintWriter out;
   private BufferedReader in;
+  // For testing
+  private boolean isForTested;
+  private String testResponse;
 
-  // Initialize the server socket and start listening on the specified port
+  // constructor
+  public SocketNetworkHandler(boolean isForTested) {
+    this.isForTested = isForTested;
+  }
+
   @Override
   public void initializeServer(int portNumber) {
     try {
@@ -25,7 +30,6 @@ public class SocketNetworkHandler implements NetworkHandler {
     }
   }
 
-  // Accept an incoming client connection
   @Override
   public Socket acceptIncomingClient() {
     try {
@@ -36,26 +40,18 @@ public class SocketNetworkHandler implements NetworkHandler {
     }
   }
 
-  // Wait for data from the client and read it
   @Override
   public String waitForDataFromClient(Socket clientSocket) {
-    // Initialize a StringBuilder to store the client request.
     StringBuilder requestBuilder = new StringBuilder();
 
     try {
-      // Create an InputStream to read from the client socket.
       InputStream input = clientSocket.getInputStream();
-      // Wrap the InputStream in a BufferedReader for easier reading.
       BufferedReader in = new BufferedReader(new InputStreamReader(input));
 
       String line;
       int contentLength = 0;
       boolean isHeader = true;
-
-      // Loop to read the header lines from the client request.
       while (isHeader && (line = in.readLine()) != null) {
-        // If the line starts with "Content-Length:", parse and store the content
-        // length.
         if (line.startsWith("Content-Length: ")) {
           contentLength = Integer.parseInt(line.split(":")[1].trim());
         }
@@ -69,41 +65,37 @@ public class SocketNetworkHandler implements NetworkHandler {
         }
       }
 
-      // If the request has a body, read it.
       if (contentLength > 0) {
         char[] bodyChars = new char[contentLength];
         in.read(bodyChars, 0, contentLength);
         requestBuilder.append(bodyChars);
       }
 
-      // Return the complete request string.
       return requestBuilder.toString();
 
     } catch (Exception e) {
-      // Print the stack trace for debugging and return null to indicate an error.
       e.printStackTrace();
       return null;
     }
   }
 
-  // Send a response back to the client
   @Override
   public void sendResponseToClient(String response, Socket clientSocket) {
     try {
       out = new PrintWriter(clientSocket.getOutputStream(), true);
       out.println(response);
+      out.flush();
     } catch (IOException e) {
       e.printStackTrace();
     }
   }
 
-  // Send data to the server and wait for the response
   @Override
   public String sendDataToServer(String serverName, int portNumber, String data) {
-    System.out.println("Sending data to server...");
     try {
-      initializeClientSocket(serverName, portNumber);
+      out = new PrintWriter(clientSocket.getOutputStream(), true);
       out.println(data);
+      out.flush();
       System.out.println("Waiting for response from server..." + data);
       return readServerResponse();
     } catch (IOException e) {
@@ -115,12 +107,15 @@ public class SocketNetworkHandler implements NetworkHandler {
     }
   }
 
-  // Send a request to the server and receive the response
   @Override
   public String receiveDataFromServer(String serverName, int portNumber, String request) {
+    if (isForTested) {
+      return testResponse;
+    }
     try {
-      initializeClientSocket(serverName, portNumber);
+      out = new PrintWriter(clientSocket.getOutputStream(), true);
       out.println(request);
+      out.flush();
       return readServerResponse();
     } catch (IOException e) {
       e.printStackTrace();
@@ -130,62 +125,56 @@ public class SocketNetworkHandler implements NetworkHandler {
     }
   }
 
-  // Initialize client-side socket and IO streams
-  private void initializeClientSocket(String serverName, int portNumber) throws IOException {
-    if (clientSocket == null || clientSocket.isClosed()) {
+  @Override
+  public int initializeClientSocket(String serverName, int portNumber) {
+    if (isForTested) {
+      return 0;
+    }
+    try {
+      this.closeResources();
       clientSocket = new Socket(serverName, portNumber);
       out = new PrintWriter(clientSocket.getOutputStream(), true);
       in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+      String clockLine = in.readLine();
+      System.out.println("Clock line: " + clockLine);
+      if (clockLine != null && clockLine.startsWith("LamportClock: ")) {
+        return Integer.parseInt(clockLine.split(":")[1].trim());
+      } else {
+        throw new IOException("Error while initializing client socket.");
+      }
+    } catch (IOException e) {
+      System.out.println("Error while initializing client socket: " + e.getMessage());
+      e.printStackTrace();
+      closeResources();
+      return -1;
     }
   }
 
-  // Read the response from the server
   private String readServerResponse() throws IOException {
-    StringBuilder response = new StringBuilder();
+    StringBuilder responseBuilder = new StringBuilder();
     String line;
-
-    // Append '{' to denote the start of the JSON object
-    response.append('{');
-
-    while ((line = in.readLine()) != null && !line.isEmpty()) {
-      // Check if the line contains a JSON object or array
-      if (line.contains("{") || line.contains("[")) {
-        // If so, consider the part before the '{' or '[' as the key
-        int index = Math.min(line.indexOf('{') != -1 ? line.indexOf('{') : Integer.MAX_VALUE,
-            line.indexOf('[') != -1 ? line.indexOf('[') : Integer.MAX_VALUE);
-        String key = line.substring(0, index).split(":")[0].trim();
-        String value = line.substring(index).trim();
-
-        response.append("\"").append(key).append("\"").append(": ").append(value);
-      } else {
-        // Otherwise, treat it as a regular key-value pair
-        String[] parts = line.split(": ", 2);
-        if (parts.length == 2) {
-          String key = parts[0].trim();
-          String value = parts[1].trim();
-
-          // Enclose keys and values in double quotes
-          response.append("\"").append(key).append("\"").append(": ").append("\"").append(value).append("\"");
-        }
+    int contentLength = 0;
+    boolean isHeader = true;
+    in.readLine();
+    while (isHeader && (line = in.readLine()) != null) {
+      if (line.startsWith("Content-Length: ")) {
+        contentLength = Integer.parseInt(line.split(":")[1].trim());
       }
 
-      response.append(",");
+      responseBuilder.append(line).append("\r\n");
+
+      if (line.isEmpty()) {
+        isHeader = false;
+      }
     }
 
-    // Remove trailing comma, if any
-    if (response.charAt(response.length() - 1) == ',') {
-      response.deleteCharAt(response.length() - 1);
-    }
-
-    // Append '}' to denote the end of the JSON object
-    response.append('}');
-
-    System.out.println("Response from server: " + response);
-    return response.toString();
+    char[] bodyChars = new char[contentLength];
+    in.read(bodyChars, 0, contentLength);
+    responseBuilder.append(bodyChars);
+    return responseBuilder.toString();
 
   }
 
-  // Close all open resources
   @Override
   public void closeResources() {
     try {
@@ -200,5 +189,16 @@ public class SocketNetworkHandler implements NetworkHandler {
     } catch (IOException e) {
       e.printStackTrace();
     }
+  }
+
+  @Override
+  public String handleTestRequest(String serverName, int portNumber, String request) {
+    this.testResponse = request;
+    return receiveDataFromServer(serverName, portNumber, request);
+  }
+
+  @Override
+  public boolean checkClientSocketIsClosed() {
+    return clientSocket == null;
   }
 }

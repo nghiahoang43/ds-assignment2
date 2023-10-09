@@ -1,0 +1,4 @@
+id:IDS60902
+local_date_time_full:20210423160000
+air_temp:19.5
+cloud:No cloud below 1500m, cumulonimbus excepted
