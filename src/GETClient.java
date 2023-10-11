@@ -3,17 +3,17 @@ import com.google.gson.*;
 import java.util.UUID;
 
 public class GETClient {
-  private static final Gson gson = new Gson();
   private NetworkHandler networkHandler;
-  private final String serverId;
+  private final String serverID;
+  private static final Gson gson = new Gson();
   private final LamportClock lamportClock;
-  private static final int DEFAUL_PORT = 4567;
   private static final String DEFAULT_HOST = "localhost";
+  private static final int DEFAUL_PORT = 4567;
 
   // Constructor to initialize the GETClient
   public GETClient(boolean isForTested) {
     this.networkHandler = new SocketNetworkHandler(isForTested);
-    this.serverId = UUID.randomUUID().toString();
+    this.serverID = UUID.randomUUID().toString();
     this.lamportClock = new LamportClock();
   }
 
@@ -62,7 +62,7 @@ public class GETClient {
 
   public String generateRequestString(int currentTime, String stationID) {
     return "GET /weather.json HTTP/1.1\r\n" +
-        "ServerID: " + serverId + "\r\n" +
+        "ServerID: " + serverID + "\r\n" +
         "LamportClock: " + currentTime + "\r\n" +
         (stationID != null ? "StationID: " + stationID + "\r\n" : "") +
         "\r\n";

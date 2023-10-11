@@ -1,30 +1,30 @@
 import com.google.gson.*;
 
 public class WeatherData implements Comparable<WeatherData> {
-  private final JsonObject data; // Immutable reference to weather data
-  private final int time; // Immutable Lamport clock time
-  private final String serverId; // Immutable ID of the server from which the data is received
+  private final int time;
+  private final JsonObject data;
+  private final String serverID;
 
-  public WeatherData(JsonObject data, int time, String serverId) {
-    if (data == null || serverId == null) {
-      throw new IllegalArgumentException("Data and server ID must not be null");
+  public WeatherData(JsonObject data, int time, String serverID) {
+    if (data == null || serverID == null) {
+      throw new IllegalArgumentException("Error 400: data or serverID is null.");
     }
 
-    this.data = data; // Deep copy to ensure immutability
     this.time = time;
-    this.serverId = serverId;
+    this.data = data;
+    this.serverID = serverID;
   }
 
   public JsonObject getData() {
-    return data; // Return a deep copy to ensure immutability
-  }
-
-  public String getServerId() {
-    return serverId;
+    return data;
   }
 
   public int getTime() {
     return time;
+  }
+
+  public String getserverID() {
+    return serverID;
   }
 
   @Override
@@ -34,6 +34,6 @@ public class WeatherData implements Comparable<WeatherData> {
 
   @Override
   public String toString() {
-    return "LamportTime: " + time + ", ServerID: " + serverId + ", Data: " + data.toString();
+    return "LamportTime: " + time + ", serverID: " + serverID + ", Data: " + data.toString();
   }
 }

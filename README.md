@@ -1,4 +1,4 @@
-# Weather Data Aggregation System Overview
+# ASSIGNMENT 2 - Weather Data Aggregation System Overview
 ## Nghia Hoang - a1814303
 
 The Weather Data Aggregation System is a set of server and client utilities that allow for the collection, storage, and retrieval of weather data. The system is composed of the `AggregationServer`, `ContentServer`, and `GETClient` components. This system also incorporates a Lamport clock for synchronization, JSON handling for data parsing, and socket networking for communication between components.

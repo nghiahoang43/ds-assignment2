@@ -21,6 +21,7 @@ TEST_SOURCES = src/AggregationServerTest.java \
 
 TEST_MAIN_CLASS = org.junit.platform.console.ConsoleLauncher
 
+HOST = localhost
 PORT = 4567
 
 all:
@@ -33,10 +34,10 @@ aggregation: all
 	$(JAVA) $(CP_PATH) AggregationServer ${PORT}
 
 content: all
-	$(JAVA) $(CP_PATH) ContentServer localhost ${PORT} src/input.txt
+	$(JAVA) $(CP_PATH) ContentServer ${HOST} ${PORT} src/input.txt
 
 client: all
-	$(JAVA) $(CP_PATH) GETClient localhost:${PORT} IDS60901
+	$(JAVA) $(CP_PATH) GETClient ${HOST}:${PORT} IDS60901
 
 compile-test: compile-main
 	@$(JAVAC) $(CPTEST) $(MAIN_SOURCES) $(TEST_SOURCES)

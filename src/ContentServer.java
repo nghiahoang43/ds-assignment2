@@ -6,11 +6,11 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class ContentServer {
-  private final String serverID;
-  private final LamportClock lamportClock;
+  private final NetworkHandler networkHandler;
   private JsonObject weatherData;
   private final ScheduledExecutorService dataUploadScheduler;
-  private final NetworkHandler networkHandler;
+  private final String serverID;
+  private final LamportClock lamportClock;
   private static final int DEFAUL_PORT = 4567;
   private static final String DEFAULT_HOST = "localhost";
   private static final String DEFAULT_PATH = "src/input.txt";
@@ -20,45 +20,6 @@ public class ContentServer {
     this.lamportClock = new LamportClock();
     this.dataUploadScheduler = Executors.newScheduledThreadPool(1);
     this.networkHandler = new SocketNetworkHandler(isForTested);
-  }
-
-  public static void main(String[] args) {
-    try {
-      String host = DEFAULT_HOST;
-      int port = DEFAUL_PORT;
-      String path = DEFAULT_PATH;
-      if (args.length == 3) {
-        host = args[0];
-        port = Integer.parseInt(args[1]);
-        path = args[2];
-      } else if (args.length == 2) {
-        host = args[0];
-        port = Integer.parseInt(args[1]);
-      } else if (args.length == 1) {
-        host = args[0];
-      }
-      ContentServer server = new ContentServer(false);
-
-      String fileContent = JSONHandler.readFile(path);
-      JsonObject parsedData = JSONHandler.parseTextToJSON(fileContent);
-      server.setWeatherData(parsedData);
-      server.uploadData(host, port);
-
-      // Get the current Runtime Environment
-      Runtime runtime = Runtime.getRuntime();
-
-      // Define what the new Thread will do
-      Thread shutdownHook = new Thread(() -> {
-        // This will be executed when the JVM shuts down
-        server.terminateResources();
-      });
-
-      // Register the new Thread to run upon JVM shutdown
-      runtime.addShutdownHook(shutdownHook);
-    } catch (Exception e) {
-      System.out.println("Error 400: " + e.getMessage());
-      return;
-    }
   }
 
   public NetworkHandler getNetworkHandler() {
@@ -170,7 +131,46 @@ public class ContentServer {
     }
   }
 
-  public JsonObject getWeatherData(){
+  public JsonObject getWeatherData() {
     return this.weatherData;
+  }
+
+  public static void main(String[] args) {
+    try {
+      String host = DEFAULT_HOST;
+      int port = DEFAUL_PORT;
+      String path = DEFAULT_PATH;
+      if (args.length == 3) {
+        host = args[0];
+        port = Integer.parseInt(args[1]);
+        path = args[2];
+      } else if (args.length == 2) {
+        host = args[0];
+        port = Integer.parseInt(args[1]);
+      } else if (args.length == 1) {
+        host = args[0];
+      }
+      ContentServer server = new ContentServer(false);
+
+      String fileContent = JSONHandler.readFile(path);
+      JsonObject parsedData = JSONHandler.parseTextToJSON(fileContent);
+      server.setWeatherData(parsedData);
+      server.uploadData(host, port);
+
+      // Get the current Runtime Environment
+      Runtime runtime = Runtime.getRuntime();
+
+      // Define what the new Thread will do
+      Thread shutdownHook = new Thread(() -> {
+        // This will be executed when the JVM shuts down
+        server.terminateResources();
+      });
+
+      // Register the new Thread to run upon JVM shutdown
+      runtime.addShutdownHook(shutdownHook);
+    } catch (Exception e) {
+      System.out.println("Error 400: " + e.getMessage());
+      return;
+    }
   }
 }

@@ -1,23 +1,3 @@
-// import static org.junit.Assert.assertEquals;
-
-// import org.junit.jupiter.api.*;
-
-// import com.google.gson.*;
-
-// public class GETClientTest {
-//   GETClient client;
-//   NetworkHandler networkHandler;
-
-//   @BeforeEach
-//   void initialize() {
-//     client = new GETClient(true);
-//     networkHandler = client.getNetworkHandler();
-//   }
-
-//   @Test
-
-
-// }
 import com.google.gson.JsonObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

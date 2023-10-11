@@ -15,32 +15,17 @@ import com.google.gson.*;
 import com.google.gson.reflect.TypeToken;
 
 public class AggregationServer {
+  private NetworkHandler networkHandler;
+  private static final Gson gson = new Gson();
+  private LinkedBlockingQueue<Socket> requestQueue = new LinkedBlockingQueue<>();
   private Map<String, PriorityQueue<WeatherData>> weatherDataMap = new ConcurrentHashMap<>();
   private Map<String, Long> timeMap = new ConcurrentHashMap<>();
-  private LinkedBlockingQueue<Socket> requestQueue = new LinkedBlockingQueue<>();
+  private volatile boolean shutdownFlag = false;
   private LamportClock lamportClock = new LamportClock();
-  private static final Gson gson = new Gson();
-  private static final String DATA_FILE_PATH = "src" + File.separator + "data.json";
-  private static final String TIME_FILE = "src" + File.separator + "timeData.json";
-  private static final String INIT_DATA_FILE = "src" + File.separator + "initData.json";
-  private static final String INIT_TIME_FILE = "src" + File.separator + "initTimeData.json";
   private Thread acceptThread;
   private ScheduledExecutorService fileSaveScheduler;
   private ScheduledExecutorService cleanupScheduler;
-  private volatile boolean shutdownFlag = false;
   private static final int DEFAUL_PORT = 4567;
-  private NetworkHandler networkHandler;
-
-  public static void main(String[] args) {
-    int port;
-    if (args.length == 0) {
-      port = DEFAUL_PORT;
-    } else {
-      port = Integer.parseInt(args[0]);
-    }
-    AggregationServer server = new AggregationServer(false);
-    server.start(port);
-  }
 
   public AggregationServer(boolean isForTested) {
     this.networkHandler = new SocketNetworkHandler(isForTested);
@@ -63,9 +48,157 @@ public class AggregationServer {
     processClientRequests();
   }
 
+  public JsonObject getWeatherData(String stationID) {
+    PriorityQueue<WeatherData> queue = weatherDataMap.get(stationID);
+    if (queue == null || queue.isEmpty()) {
+      return null;
+    }
+    return queue.peek().getData();
+  }
+
+  public int getLamportClockTime() {
+    return lamportClock.getTime();
+  }
+
+  public void loadDataFromFile() {
+    Map<String, PriorityQueue<WeatherData>> loadedQueue = readDataFile(
+        "src" + File.separator + "data.json",
+        "src" + File.separator + "initData.json",
+        new TypeToken<ConcurrentHashMap<String, PriorityQueue<WeatherData>>>() {
+        }.getType());
+
+    Map<String, Long> loadedTimeService = readDataFile(
+        "src" + File.separator + "timeData.json",
+        "src" + File.separator + "initTimeData.json",
+        new TypeToken<ConcurrentHashMap<String, Long>>() {
+        }.getType());
+
+    this.weatherDataMap = loadedQueue;
+    this.timeMap = loadedTimeService;
+  }
+
+  private void cleanupStaleEntries() {
+    long currentTime = System.currentTimeMillis();
+
+    // Identify stale server IDs
+    Set<String> staleServerIDs = timeMap.keySet().stream()
+        .filter(entry -> currentTime - timeMap.get(entry) > 20000)
+        .collect(Collectors.toSet());
+
+    staleServerIDs.forEach(timeMap::remove);
+
+    if (timeMap.keySet().isEmpty()) {
+      weatherDataMap.keySet().forEach(weatherDataMap::remove);
+      return;
+    }
+
+    for (String stationID : weatherDataMap.keySet()) {
+      PriorityQueue<WeatherData> queue = weatherDataMap.get(stationID);
+      queue.removeIf(weatherData -> staleServerIDs.contains(weatherData.getserverID()));
+
+      if (queue.isEmpty()) {
+        weatherDataMap.remove(stationID);
+      }
+    }
+  }
+
+  private void processClientRequests() {
+    System.out.println("Processing client requests...\n");
+    try {
+      while (!shutdownFlag) {
+        Socket clientSocket = waitForClient();
+        if (clientSocket != null) {
+          System.out.println("New connection\n");
+          handleClientSocket(clientSocket);
+        }
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    } finally {
+      networkHandler.closeResources();
+    }
+  }
+
+  private String extractContent(List<String> lineList) {
+    int startIndex = lineList.indexOf("") + 1;
+    return String.join("", lineList.subList(startIndex, lineList.size()));
+  }
+
+  private String processGet(Map<String, String> headers, String content) {
+    int lamportTimestamp = extractLamportTime(headers);
+    String stationKey = findStationId(headers);
+    if (stationKey == null) {
+      return constructResponse("204 No Content", null);
+    }
+    PriorityQueue<WeatherData> dataQueue = weatherDataMap.get(stationKey);
+    if (isQueueEmpty(dataQueue)) {
+      return constructResponse("204 No Content", null);
+    }
+
+    Optional<WeatherData> matchingData = locateWeatherData(dataQueue, lamportTimestamp);
+    return matchingData.map(data -> constructResponse("200 OK", data.getData().toString()))
+        .orElse(constructResponse("204 No Content", null));
+  }
+
+  private Socket waitForClient() throws InterruptedException {
+    if (shutdownFlag)
+      return null;
+    return requestQueue.poll(10, TimeUnit.MILLISECONDS);
+  }
+
+  private void handleClientSocket(Socket clientSocket) {
+    try {
+      String requestData = networkHandler.waitForDataFromClient(clientSocket);
+      if (requestData != null) {
+        String responseData = processRequest(requestData);
+        networkHandler.sendResponseToClient(responseData, clientSocket);
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+    } finally {
+      try {
+        clientSocket.close();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  private <T> T readDataFile(String file, String initFile, Type type) {
+    try {
+      String jsonData = new String(Files.readAllBytes(Paths.get(file)));
+      return gson.fromJson(jsonData, type);
+    } catch (IOException e) {
+      try {
+        String data = new String(Files.readAllBytes(Paths.get(initFile)));
+        return gson.fromJson(data, type);
+      } catch (IOException ex) {
+        ex.printStackTrace();
+        return null;
+      }
+    }
+  }
+
+  public String processRequest(String inputData) {
+    List<String> lineList = Arrays.asList(inputData.split("\r\n"));
+    String reqMethod = lineList.get(0).split(" ")[0];
+
+    Map<String, String> headerMap = extractHeaders(lineList);
+    String bodyContent = extractContent(lineList);
+    switch (reqMethod.toUpperCase()) {
+      case "PUT":
+        return processPut(headerMap, bodyContent);
+      case "GET":
+        return processGet(headerMap, bodyContent);
+      default:
+        return constructResponse("400 Bad Request", null);
+    }
+  }
+
   private synchronized void saveDataToFile() {
-    saveObjectToFile(weatherDataMap, DATA_FILE_PATH, INIT_DATA_FILE);
-    saveObjectToFile(weatherDataMap, TIME_FILE, INIT_TIME_FILE);
+    saveObjectToFile(weatherDataMap, "src" + File.separator + "data.json", "src" + File.separator + "initData.json");
+    saveObjectToFile(weatherDataMap, "src" + File.separator + "timeData.json",
+        "src" + File.separator + "initTimeData.json");
   }
 
   private synchronized void saveObjectToFile(
@@ -87,72 +220,24 @@ public class AggregationServer {
     }
   }
 
-  public JsonObject getWeatherData(String stationID) {
-    PriorityQueue<WeatherData> queue = weatherDataMap.get(stationID);
-    if (queue == null || queue.isEmpty()) {
-      return null;
-    }
-    return queue.peek().getData();
-  }
-
-  public int getLamportClockTime() {
-    return lamportClock.getTime();
-  }
-
-  public void loadDataFromFile() {
-    Map<String, PriorityQueue<WeatherData>> loadedQueue = readDataFile(
-        DATA_FILE_PATH,
-        INIT_DATA_FILE,
-        new TypeToken<ConcurrentHashMap<String, PriorityQueue<WeatherData>>>() {
-        }.getType());
-
-    Map<String, Long> loadedTimeService = readDataFile(
-        TIME_FILE,
-        INIT_TIME_FILE,
-        new TypeToken<ConcurrentHashMap<String, Long>>() {
-        }.getType());
-
-    this.weatherDataMap = loadedQueue;
-    this.timeMap = loadedTimeService;
-  }
-
-  private <T> T readDataFile(String file, String initFile, Type type) {
-    try {
-      String jsonData = new String(Files.readAllBytes(Paths.get(file)));
-      return gson.fromJson(jsonData, type);
-    } catch (IOException e) {
-      try {
-        String data = new String(Files.readAllBytes(Paths.get(initFile)));
-        return gson.fromJson(data, type);
-      } catch (IOException ex) {
-        ex.printStackTrace();
-        return null;
+  private Map<String, String> extractHeaders(List<String> lineList) {
+    Map<String, String> headerMap = new HashMap<>();
+    for (String line : lineList) {
+      if (line.contains(": ")) {
+        String[] parts = line.split(": ", 2);
+        headerMap.put(parts[0], parts[1]);
       }
     }
+    return headerMap;
   }
 
-  private void cleanupStaleEntries() {
-    long currentTime = System.currentTimeMillis();
-
-    // Identify stale server IDs
-    Set<String> staleServerIDs = timeMap.keySet().stream()
-        .filter(entry -> currentTime - timeMap.get(entry) > 20000)
-        .collect(Collectors.toSet());
-
-    staleServerIDs.forEach(timeMap::remove);
-
-    if (timeMap.keySet().isEmpty()) {
-      weatherDataMap.keySet().forEach(weatherDataMap::remove);
-      return;
-    }
-
-    for (String stationID : weatherDataMap.keySet()) {
-      PriorityQueue<WeatherData> queue = weatherDataMap.get(stationID);
-      queue.removeIf(weatherData -> staleServerIDs.contains(weatherData.getServerId()));
-
-      if (queue.isEmpty()) {
-        weatherDataMap.remove(stationID);
-      }
+  private String processPut(Map<String, String> headers, String content) {
+    int lamportTimestamp = extractLamportTime(headers);
+    String serverKey = headers.get("ServerID");
+    if (isValidSource(serverKey) && processData(content, lamportTimestamp, serverKey)) {
+      return generateResponse(serverKey);
+    } else {
+      return constructResponse("400 Bad Request", null);
     }
   }
 
@@ -184,103 +269,8 @@ public class AggregationServer {
     acceptThread.start();
   }
 
-  private void processClientRequests() {
-    System.out.println("Processing client requests...\n");
-    try {
-      while (!shutdownFlag) {
-        Socket clientSocket = waitForClient();
-        if (clientSocket != null) {
-          System.out.println("New connection\n");
-          handleClientSocket(clientSocket);
-        }
-      }
-    } catch (Exception e) {
-      e.printStackTrace();
-    } finally {
-      networkHandler.closeResources();
-    }
-  }
-
-  private Socket waitForClient() throws InterruptedException {
-    if (shutdownFlag)
-      return null;
-    return requestQueue.poll(10, TimeUnit.MILLISECONDS);
-  }
-
-  private void handleClientSocket(Socket clientSocket) {
-    try {
-      String requestData = networkHandler.waitForDataFromClient(clientSocket);
-      if (requestData != null) {
-        String responseData = processRequest(requestData);
-        networkHandler.sendResponseToClient(responseData, clientSocket);
-      }
-    } catch (Exception e) {
-      e.printStackTrace();
-    } finally {
-      try {
-        clientSocket.close();
-      } catch (IOException e) {
-        e.printStackTrace();
-      }
-    }
-  }
-
-  public String processRequest(String inputData) {
-    List<String> lineList = Arrays.asList(inputData.split("\r\n"));
-    String reqMethod = lineList.get(0).split(" ")[0];
-
-    Map<String, String> headerMap = extractHeaders(lineList);
-    String bodyContent = extractContent(lineList);
-    switch (reqMethod.toUpperCase()) {
-      case "GET":
-        return processGet(headerMap, bodyContent);
-      case "PUT":
-        return processPut(headerMap, bodyContent);
-      default:
-        return constructResponse("400 Bad Request", null);
-    }
-  }
-
-  private Map<String, String> extractHeaders(List<String> lineList) {
-    Map<String, String> headerMap = new HashMap<>();
-    for (String line : lineList) {
-      if (line.contains(": ")) {
-        String[] parts = line.split(": ", 2);
-        headerMap.put(parts[0], parts[1]);
-      }
-    }
-    return headerMap;
-  }
-
-  private String extractContent(List<String> lineList) {
-    int startIndex = lineList.indexOf("") + 1;
-    return String.join("", lineList.subList(startIndex, lineList.size()));
-  }
-
-  private String processGet(Map<String, String> headers, String content) {
-    int lamportTimestamp = extractLamportTime(headers);
-    String stationKey = findStationId(headers);
-    if (stationKey == null) {
-      return constructResponse("204 No Content", null);
-    }
-    PriorityQueue<WeatherData> dataQueue = weatherDataMap.get(stationKey);
-    if (isQueueEmpty(dataQueue)) {
-      return constructResponse("204 No Content", null);
-    }
-
-    Optional<WeatherData> matchingData = locateWeatherData(dataQueue, lamportTimestamp);
-    return matchingData.map(data -> constructResponse("200 OK", data.getData().toString()))
-        .orElse(constructResponse("204 No Content", null));
-  }
-
-  private String processPut(Map<String, String> headers, String content) {
-    int lamportTimestamp = extractLamportTime(headers);
-    String serverKey = headers.get("ServerID");
-    if (isValidSource(serverKey) && processData(content, lamportTimestamp, serverKey)) {
-      return generateResponse(serverKey);
-    } else {
-      return constructResponse("400 Bad Request", null);
-    }
+  public boolean isValidStation(String stationId) {
+    return stationId != null && !stationId.isEmpty();
   }
 
   private String constructResponse(String status, String json) {
@@ -301,14 +291,6 @@ public class AggregationServer {
     int lamportTime = Integer.parseInt(headers.getOrDefault("LamportClock", "-1"));
     lamportClock.receive(lamportTime);
     return lamportClock.getTime();
-  }
-
-  private String findStationId(Map<String, String> headers) {
-    String stationId = headers.get("StationID");
-    if (stationId != null && !stationId.isEmpty()) {
-      return stationId;
-    }
-    return weatherDataMap.keySet().stream().findFirst().orElse(null);
   }
 
   private boolean isQueueEmpty(PriorityQueue<WeatherData> queue) {
@@ -350,6 +332,14 @@ public class AggregationServer {
     }
   }
 
+  private String findStationId(Map<String, String> headers) {
+    String stationId = headers.get("StationID");
+    if (stationId != null && !stationId.isEmpty()) {
+      return stationId;
+    }
+    return weatherDataMap.keySet().stream().findFirst().orElse(null);
+  }
+
   private boolean isNewOrDelayedRequest(Long lastTimestamp, long currentTimestamp) {
     return lastTimestamp == null || (currentTimestamp - lastTimestamp) > 20000;
   }
@@ -371,10 +361,6 @@ public class AggregationServer {
 
   public String extractID(JsonObject weatherDataJSON) {
     return weatherDataJSON.has("id") ? weatherDataJSON.get("id").toString().replace("\"", "") : null;
-  }
-
-  public boolean isValidStation(String stationId) {
-    return stationId != null && !stationId.isEmpty();
   }
 
   public void terminate() {
@@ -416,5 +402,16 @@ public class AggregationServer {
       scheduler.shutdownNow();
       Thread.currentThread().interrupt();
     }
+  }
+
+  public static void main(String[] args) {
+    int port;
+    if (args.length == 0) {
+      port = DEFAUL_PORT;
+    } else {
+      port = Integer.parseInt(args[0]);
+    }
+    AggregationServer server = new AggregationServer(false);
+    server.start(port);
   }
 }
